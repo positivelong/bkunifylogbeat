@@ -27,7 +27,7 @@ import (
 	"time"
 
 	cfg "github.com/TencentBlueKing/bkunifylogbeat/config"
-	"github.com/TencentBlueKing/collector-go-sdk/v2/bkbeat/beat"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/dustin/go-humanize"
 )
 
@@ -46,7 +46,7 @@ func init() {
 		"enabled":         true,
 		"scan_frequency":  10 * time.Second,
 		"harvester_limit": 1000,
-		"exclude_files":   []string{".gz$", ".bz2$", ".tgz$", ".tbz$", ".zip$", ".7z$", ".bak$", ".backup", ".swp$"},
+		"exclude_files":   []string{".gz$", ".bz2$", ".tgz$", ".tbz$", ".zip$", ".7z$", ".bak$", ".backup$", ".swp$"},
 
 		// close
 		"close_inactive": 2 * time.Minute,

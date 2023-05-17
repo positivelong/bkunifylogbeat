@@ -29,11 +29,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/logp"
+	bkmonitoring "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/monitoring"
+	bkStorage "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/storage"
 	cfg "github.com/TencentBlueKing/bkunifylogbeat/config"
 	"github.com/TencentBlueKing/bkunifylogbeat/task/input/wineventlog"
-	"github.com/TencentBlueKing/collector-go-sdk/v2/bkbeat/bkmonitoring"
-	"github.com/TencentBlueKing/collector-go-sdk/v2/bkbeat/logp"
-	bkStorage "github.com/TencentBlueKing/collector-go-sdk/v2/bkbeat/storage"
 	"github.com/elastic/beats/filebeat/input/file"
 	commonFile "github.com/elastic/beats/libbeat/common/file"
 	"github.com/elastic/beats/libbeat/monitoring"
@@ -82,6 +82,11 @@ func New(config cfg.Registry) (*Registrar, error) {
 // Init: 采集器启动时调用，同时对原采集器采集进度迁移
 func (r *Registrar) Init() error {
 	var states []file.State
+
+	// set flush interval
+	if r.flushTimeout > time.Second {
+		bkStorage.SetFlushInterval(r.flushTimeout)
+	}
 
 	// get time
 	str, err := bkStorage.Get(timeKey)

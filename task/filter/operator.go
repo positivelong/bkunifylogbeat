@@ -20,21 +20,33 @@
 // WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 // SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-package include
+package filter
 
-import (
-	// input type
-	_ "github.com/elastic/beats/filebeat/input/log"
-	_ "github.com/elastic/beats/filebeat/input/redis"
-	_ "github.com/elastic/beats/filebeat/input/stdin"
-	_ "github.com/elastic/beats/filebeat/input/syslog"
-	_ "github.com/elastic/beats/filebeat/input/udp"
+func equal(a, b string) bool {
+	return a == b
+}
 
-	_ "github.com/TencentBlueKing/bkunifylogbeat/task/input/wineventlog"
+func notEqual(a, b string) bool {
+	return a != b
+}
 
-	// input config
-	_ "github.com/TencentBlueKing/bkunifylogbeat/config/input"
+// sequence same with config define
+var operation = []func(a, b string) bool{
+	equal,
+	notEqual,
+}
 
-	// formatter
-	_ "github.com/TencentBlueKing/bkunifylogbeat/task/formatter"
+const (
+	EqualOperation = iota
+	NotEqualOperation
 )
+
+func getOperation(op string) func(a, b string) bool {
+	if op == "=" {
+		return equal
+	} else if op == "!=" {
+		return notEqual
+	} else {
+		return nil
+	}
+}
