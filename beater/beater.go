@@ -28,21 +28,29 @@ package beater
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"runtime"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/logp"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/host"
-	cfg "github.com/TencentBlueKing/bkunifylogbeat/config"
-	// 加载 Filebeat Input插件及配置优化模块
-	_ "github.com/TencentBlueKing/bkunifylogbeat/include"
-	"github.com/TencentBlueKing/bkunifylogbeat/registrar"
+	"github.com/elastic/beats/libbeat/cfgfile"
+	"github.com/elastic/beats/libbeat/common"
 	"github.com/pkg/errors"
+
+	cfg "github.com/TencentBlueKing/bkunifylogbeat/config"
+	_ "github.com/TencentBlueKing/bkunifylogbeat/include" // 加载 Filebeat Input插件及配置优化模块
+	"github.com/TencentBlueKing/bkunifylogbeat/registrar"
+	"github.com/TencentBlueKing/bkunifylogbeat/utils"
 )
 
 var Registrar *registrar.Registrar
+
+const beatName = "bkunifylogbeat"
 
 // LogBeat  package cadvisor
 type LogBeat struct {
@@ -53,7 +61,8 @@ type LogBeat struct {
 
 	hostIDWatcher host.Watcher
 
-	isReload bool
+	isReload     bool
+	lastTaskHash string
 }
 
 // New create cadvisor beat
@@ -97,13 +106,51 @@ func (bt *LogBeat) PublishEvent(event beat.MapStr) bool {
 	return beat.Send(event)
 }
 
+func (bt *LogBeat) windowsReload() {
+	if !beat.IsContainerMode() {
+		return
+	}
+
+	var modTime time.Time
+	checkFunc := func() error {
+		fileInfo, err := os.Stat(bt.config.WindowsReloadPath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+
+		if fileInfo.ModTime() != modTime {
+			select {
+			case beat.ReloadChan <- true:
+			default:
+			}
+		}
+		modTime = fileInfo.ModTime()
+		return nil
+	}
+
+	ticker := time.NewTicker(time.Second * 10)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if err := checkFunc(); err != nil {
+				logp.L.Errorf("failed to check windows reload path: %s", err)
+			}
+		}
+	}
+}
+
 // Run beater interface
 func (bt *LogBeat) Run() error {
 	logp.L.Infof("logbeat is running! Hit CTRL-C to stop it.")
 
 	// load last states
 	var err error
-	Registrar, err = registrar.New(bt.config.Registry)
+	Registrar, err = registrar.New(bt.config.Registry, bt.config.FileIdentifier)
 	if err != nil {
 		return err
 	}
@@ -113,11 +160,17 @@ func (bt *LogBeat) Run() error {
 	}
 	defer Registrar.Stop()
 
-	if err := bt.manager.Start(); nil != err {
+	if err := bt.manager.Start(); err != nil {
 		logp.L.Error("failed to start manager ")
 	}
 
+	if runtime.GOOS == "windows" {
+		go bt.windowsReload()
+	}
+
 	reloadTicker := time.NewTicker(10 * time.Second)
+	diffTaskTicker := time.NewTicker(60 * time.Second)
+	defer diffTaskTicker.Stop()
 	defer reloadTicker.Stop()
 	for {
 		select {
@@ -126,8 +179,21 @@ func (bt *LogBeat) Run() error {
 			if bt.isReload {
 				bt.isReload = false
 				config := beat.GetConfig()
+				if bt.config.CheckDiff {
+					config, err = GetRawConfig()
+					if err != nil {
+						logp.L.Error(err)
+					}
+				}
 				if config != nil {
 					bt.Reload(config)
+				}
+			}
+		// 处理采集器主配置是否变更，变更则发送重加载信号
+		case <-diffTaskTicker.C:
+			if bt.config.CheckDiff {
+				if err = bt.checkDiffReload(); err != nil {
+					logp.L.Error(err)
 				}
 			}
 		case <-beat.ReloadChan:
@@ -146,6 +212,53 @@ func (bt *LogBeat) Run() error {
 func (bt *LogBeat) Stop() {
 	bt.manager.Stop()
 	close(bt.done)
+}
+
+// GetRawConfig Get raw main config
+func GetRawConfig() (*common.Config, error) {
+	rawConfig, err := cfgfile.Load("", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if !rawConfig.HasField(beatName) {
+		return nil, errors.New("no beat name field found")
+	}
+
+	beatConfig, err := rawConfig.Child(beatName, -1)
+	if err != nil {
+		return nil, err
+	}
+
+	return beatConfig, nil
+}
+
+// Main config diff check
+func (bt *LogBeat) checkDiffReload() error {
+	beatConfig, err := GetRawConfig()
+	if err != nil {
+		return err
+	}
+	config, err := cfg.Parse(beatConfig)
+	if err != nil {
+		return err
+	}
+	b, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+
+	currentTaskHash := utils.Md5(string(b))
+	if len(bt.lastTaskHash) == 0 {
+		bt.lastTaskHash = currentTaskHash
+	}
+	if bt.lastTaskHash != currentTaskHash {
+		bt.lastTaskHash = currentTaskHash
+		bt.Reload(beatConfig)
+		logp.L.Info("Reload main config task.")
+	}
+
+	return nil
 }
 
 // Close cadvisor storage interface

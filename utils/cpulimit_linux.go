@@ -20,20 +20,22 @@
 // WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 // SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+//go:build linux
 // +build linux
 
 package utils
 
 import (
 	"bytes"
-	"github.com/shirou/gopsutil/cpu"
-	"github.com/shirou/gopsutil/process"
-	"github.com/tklauser/go-sysconf"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/shirou/gopsutil/cpu"
+	"github.com/shirou/gopsutil/process"
+	"github.com/tklauser/go-sysconf"
 )
 
 var ClockTicks = 100 // default value
@@ -46,12 +48,18 @@ func init() {
 	}
 }
 
+// GetCpuTimes 获取指定进程的CPU时间统计信息。
+// p: 指向 process.Process 的指针，代表要查询的进程。
+// 返回值:
+//
+//	*cpu.TimesStat: 指向 cpu.TimesStat 的指针，包含CPU时间统计信息。
+//	error: 如果发生错误，将返回相应的错误信息。
 func (c *CPULimit) GetCpuTimes(p *process.Process) (*cpu.TimesStat, error) {
 	return GetCpuTime()
 }
 
-//GetEnv retrieves the environment variable key. If it does not exist it returns the default.
-//github.com/shirou/gopsutil@v3.21.8+incompatible/internal/common/common.go
+// GetEnv retrieves the environment variable key. If it does not exist it returns the default.
+// github.com/shirou/gopsutil@v3.21.8+incompatible/internal/common/common.go
 func GetEnv(key string, dfault string, combineWith ...string) string {
 	value := os.Getenv(key)
 	if value == "" {
@@ -78,14 +86,22 @@ func splitProcStat(content []byte) []string {
 	restFields := strings.Fields(string(content[nameEnd+2:])) // +2 skip ') '
 	name := content[nameStart+1 : nameEnd]
 	pid := strings.TrimSpace(string(content[:nameStart]))
-	fields := make([]string, 3, len(restFields)+3)
+
+	// 安全计算容量，如果溢出则使用最大安全值
+	safeCapacity := len(restFields)
+	if safeCapacity < 0 || safeCapacity > 100 { // 检查是否溢出
+		safeCapacity = 100                     // 使用最大安全值
+		restFields = restFields[:safeCapacity] // 截取前N个字段
+	}
+
+	fields := make([]string, 3, safeCapacity+3)
 	fields[1] = string(pid)
 	fields[2] = string(name)
 	fields = append(fields, restFields...)
 	return fields
 }
 
-// copy from github.com/shirou/gopsutil@v3.21.8+incompatible/process/process_linux.go
+// GetCpuTime copy from github.com/shirou/gopsutil@v3.21.8+incompatible/process/process_linux.go
 func GetCpuTime() (*cpu.TimesStat, error) {
 	pid := os.Getpid()
 	var statPath = GetEnv("HOST_PROC", "/proc", strconv.Itoa(pid), "stat")

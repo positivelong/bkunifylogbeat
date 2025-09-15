@@ -24,18 +24,29 @@ package main
 
 import (
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/monitoring"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
 	"os"
 
-	"github.com/TencentBlueKing/bkunifylogbeat/beater"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/elastic/beats/libbeat/cmd/instance"
 	"github.com/elastic/beats/libbeat/publisher/processing"
+
+	"github.com/TencentBlueKing/bkunifylogbeat/beater"
+	_ "github.com/TencentBlueKing/bkunifylogbeat/json"
 )
 
 var (
 	beatName = "bkunifylogbeat"
 	version  = "7.2.1"
 )
+
+func initGseHook() {
+	gse.RegisterSendHook(func(i int32, f float64) bool {
+		monitoring.NewFloatWithDataID(int(i), "beat_send_bytes_total").Add(f)
+		return true
+	})
+}
 
 func main() {
 	//step 1: 初始化采集器
@@ -57,6 +68,7 @@ func main() {
 		fmt.Printf("New failed with error: %s\n\n", err.Error())
 		os.Exit(1)
 	}
+	initGseHook()
 	// step 3：主动开启采集器
 	bt.Run()
 }

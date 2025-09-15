@@ -26,23 +26,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TencentBlueKing/bkunifylogbeat/config"
 	"github.com/elastic/beats/filebeat/input/file"
 	"github.com/elastic/beats/filebeat/util"
 	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkunifylogbeat/config"
 )
 
-func TestNewUnifytlogcFormatter(t *testing.T) {
-	vars := map[string]interface{}{
-		"dataid":          "999990001",
-		"harvester_limit": 10,
-	}
-	taskConfig, err := config.CreateTaskConfig(vars)
-	if err != nil {
-		panic(err)
-	}
+func BaseFormatter(t *testing.T, taskConfig *config.TaskConfig) {
+
 	f, err := NewUnifytlogcFormatter(taskConfig)
 	if err != nil {
 		panic(err)
@@ -84,4 +78,16 @@ func TestNewUnifytlogcFormatter(t *testing.T) {
 		t.Log(path, worldID, result["_worldid_"])
 		assert.Equal(t, worldID, result["_worldid_"])
 	}
+}
+
+func TestNewUnifytlogcFormatter(t *testing.T) {
+	vars := map[string]interface{}{
+		"dataid":          "999990001",
+		"harvester_limit": 10,
+	}
+	taskConfig, err := config.CreateTaskConfig(vars)
+	if err != nil {
+		panic(err)
+	}
+	BaseFormatter(t, taskConfig)
 }

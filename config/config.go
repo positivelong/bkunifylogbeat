@@ -45,6 +45,10 @@ type Config struct {
 
 	// SecConfigs sec config path and pattern
 	SecConfigs []SecConfigItem `config:"multi_config"`
+	Seccomp    Seccomp         `config:"seccomp"`
+
+	// Tasks 允许加载子配置采集项
+	Tasks []interface{} `config:"tasks"`
 
 	Registry Registry `config:"registry"`
 
@@ -52,6 +56,11 @@ type Config struct {
 	CmdbLevelMaxLength int    `config:"cmdb_level_max_length"`
 	IgnoreCmdbLevel    bool   `config:"ignore_cmdb_level"`
 	MustHostIDExist    bool   `config:"must_host_id_exist"`
+	CheckDiff          bool   `config:"check_diff"`
+	WindowsReloadPath  string `config:"windows_reload_path"`
+
+	// 采集状态的唯一标识符
+	FileIdentifier string `config:"file_identifier"`
 }
 
 // 从配置目录
@@ -60,13 +69,18 @@ type SecConfigItem struct {
 	Pattern string `config:"file_pattern"`
 }
 
+// 系统调用配置
+type Seccomp struct {
+	Enable bool `config:"enable"`
+}
+
 // 采集状态
 type Registry struct {
 	FlushTimeout time.Duration `config:"flush"`
 	GcFrequency  time.Duration `config:"gc_frequency"`
 }
 
-//默认配置
+// Factory 默认配置
 type Factory = func(rawConfig *beat.Config) (*beat.Config, error)
 
 var registry = make(map[string]Factory)
@@ -99,6 +113,10 @@ func Parse(cfg *beat.Config) (Config, error) {
 			FlushTimeout: 1 * time.Second,
 			GcFrequency:  1 * time.Minute,
 		},
+		Seccomp: Seccomp{
+			Enable: false,
+		},
+		FileIdentifier: "inode",
 	}
 	err := cfg.Unpack(&config)
 	if err != nil {

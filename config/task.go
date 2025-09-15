@@ -23,27 +23,43 @@
 package config
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
-	"github.com/TencentBlueKing/bkunifylogbeat/utils"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/logp"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/processors"
-	"path/filepath"
-	"sort"
-	"strings"
+
+	"github.com/TencentBlueKing/bkunifylogbeat/utils"
 )
 
-// ConditionConfig : 用于条件表达式，目前支持=、!=
+// ConditionConfig : 用于条件表达式，目前支持=、!=、eq、neq、include、exclude、regex、nregex
 type ConditionConfig struct {
-	Index int    `config:"index"`
-	Key   string `config:"key"`
-	Op    string `config:"op"`
+	Index   int    `config:"index"`
+	Key     string `config:"key"`
+	Op      string `config:"op"`
+	matcher MatchFunc
+}
+
+func (c *ConditionConfig) GetMatcher() MatchFunc {
+	return c.matcher
 }
 
 // FilterConfig line filter config
 type FilterConfig struct {
 	Conditions []ConditionConfig `config:"conditions"`
+}
+
+// Mount 挂载配置
+type Mount struct {
+	HostPath      string `config:"host_path"`
+	ContainerPath string `config:"container_path"`
 }
 
 // ConditionSortByIndex condition配置
@@ -69,15 +85,71 @@ type FiltersConfig struct {
 }
 
 type SenderConfig struct {
-	CanPackage   bool        `config:"package"`
-	PackageCount int         `config:"package_count"`
-	ExtMeta      interface{} `config:"ext_meta"`
+	CanPackage   bool `config:"package"`
+	PackageCount int  `config:"package_count"`
+
+	// meta
+	ExtMeta      map[string]interface{} `config:"ext_meta"`
+	ExtMetaFiles []string               `config:"ext_meta_files"`
+	ExtMetaEnv   map[string]string      `config:"ext_meta_env"`
 
 	// Output
-	RemovePathPrefix  string `config:"remove_path_prefix"`   // 去除路径前缀
-	IsContainerStd    bool   `config:"is_container_std"`     // 是否为容器标准输出日志(docker)
-	IsCRIContainerStd bool   `config:"is_cri_container_std"` // 是否为容器标准输出日志(CRI)
-	OutputFormat      string `config:"output_format"`        // 输出格式，为了兼容老版采集器的输出格式
+	RemovePathPrefix string `config:"remove_path_prefix"` // 去除路径前缀
+	OutputFormat     string `config:"output_format"`      // 输出格式，为了兼容老版采集器的输出格式
+}
+
+type MountConfig struct {
+	RootFs         string            `config:"root_fs"` // 根目录文件系统
+	Mounts         []Mount           `config:"mounts"`  // 挂载路径信息
+	MountMap       map[string]string // 挂载路径映射
+	MountHostPaths []string          // 挂载主机排序列表
+}
+
+func metaKeyToField(key string) string {
+	metaKey := strings.ReplaceAll(key, "/", "_")
+	metaKey = strings.ReplaceAll(metaKey, ".", "_")
+	return strings.ReplaceAll(metaKey, "-", "_")
+}
+
+func loadMetaFile(p string) map[string]string {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil
+	}
+
+	meta := make(map[string]string)
+	scanner := bufio.NewScanner(bytes.NewBuffer(b))
+	for scanner.Scan() {
+		line := scanner.Text()
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		v := strings.Trim(strings.TrimSpace(parts[1]), `"`)
+		k := metaKeyToField(strings.TrimSpace(parts[0]))
+		meta[k] = v
+	}
+	return meta
+}
+
+func (c SenderConfig) GetExtMeta() map[string]interface{} {
+	ext := make(map[string]interface{})
+	for k, v := range c.ExtMeta {
+		ext[k] = v
+	}
+
+	for _, f := range c.ExtMetaFiles {
+		for k, v := range loadMetaFile(f) {
+			ext[k] = v
+		}
+	}
+
+	for newKey, env := range c.ExtMetaEnv {
+		ext[newKey] = os.Getenv(env)
+	}
+
+	return ext
 }
 
 // TaskConfig 采集任务配置
@@ -89,6 +161,9 @@ type TaskConfig struct {
 	ProcessorConfig `config:",inline"`
 	FiltersConfig   `config:",inline"`
 	SenderConfig    `config:",inline"`
+	MountConfig     `config:",inline"`
+
+	ext map[string]interface{}
 
 	// 用来标识配置的唯一性
 	InputID     string
@@ -96,11 +171,20 @@ type TaskConfig struct {
 	ProcessorID string
 	SenderID    string
 
+	IsContainerStd    bool `config:"is_container_std"`     // 是否为容器标准输出日志(docker)
+	IsCRIContainerStd bool `config:"is_cri_container_std"` // 是否为容器标准输出日志(CRI)
+
+	Output common.ConfigNamespace `config:"output"`
+
 	RawConfig *beat.Config
 }
 
+func (c *TaskConfig) GetExtMeta() map[string]interface{} {
+	return c.ext
+}
+
 // NewTaskConfig 创建采集任务配置
-func NewTaskConfig(rawConfig *beat.Config) (*TaskConfig, error) {
+func NewTaskConfig(beatConfig Config, rawConfig *beat.Config) (*TaskConfig, error) {
 	config := &TaskConfig{
 		Type:   "log",
 		DataID: 0,
@@ -111,6 +195,9 @@ func NewTaskConfig(rawConfig *beat.Config) (*TaskConfig, error) {
 			OutputFormat: "v2",
 		},
 	}
+
+	// TODO 这里需要改造成通用逻辑
+	rawConfig.SetString("file_identifier", -1, beatConfig.FileIdentifier)
 
 	err := rawConfig.Unpack(&config)
 	if err != nil {
@@ -129,12 +216,25 @@ func NewTaskConfig(rawConfig *beat.Config) (*TaskConfig, error) {
 	config.HasFilter = false
 	if len(config.Delimiter) == 1 {
 		for _, f := range config.Filters {
-			// op must be "=" or "!="
-			for _, condition := range f.Conditions {
-				if condition.Op != "=" && condition.Op != "!=" {
-					return nil, fmt.Errorf("op must = or !=")
+			// op must be "=" or "!=" or "include" or "exclude" or "eq" or "neq" or "regex" or "nregex"
+			for i, condition := range f.Conditions {
+
+				// 兼容旧数据 历史数据的字符串匹配包含 op 固定为 '='
+				if condition.Index <= 0 && condition.Op == opEqual {
+					condition.Op = opInclude
 				}
-				condition.Key = strings.TrimSpace(condition.Key)
+
+				// 初始化条件匹配方法 Matcher
+				matcher, err := getOperationFunc(condition.Op, condition.Key)
+
+				if err != nil {
+					return nil, fmt.Errorf("condition [%+v] init matcher error: %s", condition, err.Error())
+				}
+
+				condition.matcher = matcher
+
+				// 重新赋值 condition
+				f.Conditions[i] = condition
 			}
 			config.HasFilter = true
 		}
@@ -144,18 +244,26 @@ func NewTaskConfig(rawConfig *beat.Config) (*TaskConfig, error) {
 	if config.HasFilter {
 		for _, f := range config.Filters {
 			sort.Sort(ConditionSortByIndex(f.Conditions))
-			// uniq filter index
-			lastIndex := 0
-			for idx, condition := range f.Conditions {
-				if idx != 0 && lastIndex == condition.Index {
-					return nil, fmt.Errorf("filter has duplicate index")
-				}
-				lastIndex = condition.Index
-			}
 		}
 	}
 
-	//根据任务配置获取hash值
+	// 提取 hostPaths 并创建一个映射到 containerPath 的映射
+	hostPaths := make([]string, 0, len(config.Mounts))
+	mountMap := make(map[string]string, len(config.Mounts))
+	for _, mount := range config.Mounts {
+		hostPaths = append(hostPaths, mount.HostPath)
+		mountMap[mount.HostPath] = mount.ContainerPath
+	}
+
+	// 按照container path层级的数量排序host path，层级越多的路径会越先处理
+	sort.Slice(hostPaths, func(i, j int) bool {
+		return strings.Count(mountMap[hostPaths[i]], string(filepath.Separator)) > strings.Count(mountMap[hostPaths[j]], string(filepath.Separator))
+	})
+
+	config.MountHostPaths = hostPaths
+	config.MountMap = mountMap
+
+	// 根据任务配置获取hash值
 	err, config.ID = utils.HashRawConfig(config.RawConfig)
 	if err != nil {
 		return nil, err
@@ -164,6 +272,7 @@ func NewTaskConfig(rawConfig *beat.Config) (*TaskConfig, error) {
 
 	initIDWithConfig(config)
 
+	config.ext = config.SenderConfig.GetExtMeta() // 加载 extmeta
 	return config, nil
 }
 
@@ -202,6 +311,25 @@ func RemoveFields(config *common.Config, from interface{}) {
 // Same 用于采集器reload时，比较同一dataid的任务是否有做调整
 func (sourceConfig *TaskConfig) Same(targetConfig *TaskConfig) bool {
 	return sourceConfig.ID == targetConfig.ID
+}
+
+// loadTasks 从主配置中直接加载任务
+func loadTasks(config Config) map[string]*TaskConfig {
+	tasks := make(map[string]*TaskConfig)
+	for _, c := range config.Tasks {
+		cfg, err := common.NewConfigFrom(c)
+		if err != nil {
+			continue
+		}
+		task, err := NewTaskConfig(config, cfg)
+		if err != nil {
+			logp.L.Errorf("load task failed: %v", err)
+			continue
+		}
+
+		tasks[task.ID] = task
+	}
+	return tasks
 }
 
 // GetTasks 根据主配置定义的从配置目录，获取采集器定义的任务列表
@@ -244,7 +372,7 @@ func GetTasks(config Config) map[string]*TaskConfig {
 					logp.L.Errorf("Error reading config file: %v", err)
 					continue
 				}
-				task, err := NewTaskConfig(localConfigRaw)
+				task, err := NewTaskConfig(config, localConfigRaw)
 				if err != nil {
 					logp.L.Errorf("Error reading config file: %v", err)
 					continue
@@ -253,6 +381,12 @@ func GetTasks(config Config) map[string]*TaskConfig {
 			}
 		}
 	}
+
+	// 合并主配置内容
+	for k, v := range loadTasks(config) {
+		tasks[k] = v
+	}
+
 	return tasks
 }
 
@@ -265,13 +399,13 @@ func initTaskConfig(inputType string, rawConfig *beat.Config) (*beat.Config, err
 	return f(rawConfig)
 }
 
-// CreateTaskConfig: 根据字典生成任务配置
+// CreateTaskConfig 根据字典生成任务配置
 func CreateTaskConfig(vars map[string]interface{}) (*TaskConfig, error) {
 	rawConfig, err := common.NewConfigFrom(vars)
 	if err != nil {
 		return nil, err
 	}
-	config, err := NewTaskConfig(rawConfig)
+	config, err := NewTaskConfig(Config{}, rawConfig)
 	if err != nil {
 		return nil, err
 	}

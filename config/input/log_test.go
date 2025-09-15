@@ -25,11 +25,12 @@ package input
 import (
 	"testing"
 
-	cfg "github.com/TencentBlueKing/bkunifylogbeat/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/logp"
 	"github.com/elastic/beats/libbeat/common"
 	libbeatlogp "github.com/elastic/beats/libbeat/logp"
 	"github.com/stretchr/testify/assert"
+
+	cfg "github.com/TencentBlueKing/bkunifylogbeat/config"
 )
 
 func init() {
@@ -41,7 +42,7 @@ func mockTaskConfig(vars map[string]interface{}) (*cfg.TaskConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	config, err := cfg.NewTaskConfig(rawConfig)
+	config, err := cfg.NewTaskConfig(cfg.Config{}, rawConfig)
 	if err != nil {
 		return nil, err
 	}

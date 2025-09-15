@@ -23,14 +23,17 @@
 package formatter
 
 import (
-	"github.com/TencentBlueKing/bkunifylogbeat/config"
+	"testing"
+	"time"
+
+	beats "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/elastic/beats/filebeat/input/file"
 	"github.com/elastic/beats/filebeat/util"
 	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/stretchr/testify/assert"
-	"testing"
-	"time"
+
+	"github.com/TencentBlueKing/bkunifylogbeat/config"
 )
 
 func TestV2Formatter(t *testing.T) {
@@ -53,17 +56,97 @@ func TestV2Formatter(t *testing.T) {
 		Event: beat.Event{
 			Timestamp: time.Now(),
 			Fields: common.MapStr{
-				"data": `{"log":"Hello from the Kubernetes cluster\n","stream":"stdout","time":"2021-11-16T07:44:40.609753191Z"}`,
+				"data":     "Hello from the Kubernetes cluster",
+				"stream":   "stdout",
+				"log_time": "2021-11-16T07:44:40.609753191Z",
 			},
 		},
 	}
 	event.SetState(file.State{Source: "/data/bcs/docker/var/lib/docker/containers/f3616d188d0462018dc281373995c69765c2d91c39af60ee37501d65f28054ce/f3616d188d0462018dc281373995c69765c2d91c39af60ee37501d65f28054ce-json.log"})
 
-	f.Format([]*util.Data{event})
+	data := f.Format([]*util.Data{event})
 
-	_, ok := event.Event.Fields["log_time"]
-	assert.Equal(t, true, ok)
+	assert.Equal(t, data["items"].([]beats.MapStr)[0]["log_time"], event.Event.Fields["log_time"])
 
-	_, ok = event.Event.Fields["stream"]
-	assert.Equal(t, true, ok)
+	assert.Equal(t, data["items"].([]beats.MapStr)[0]["data"], event.Event.Fields["data"])
+}
+
+func TestV2Formatter_Multi(t *testing.T) {
+	vars := map[string]interface{}{
+		"dataid":             "999990001",
+		"harvester_limit":    10,
+		"remove_path_prefix": "/data/bcs/docker/var/lib/docker/containers/f3616d188d0462018dc281373995c69765c2d91c39af60ee37501d65f28054ce",
+		"is_container_std":   true,
+	}
+	taskConfig, err := config.CreateTaskConfig(vars)
+	if err != nil {
+		panic(err)
+	}
+	f, err := NewV2Formatter(taskConfig)
+	if err != nil {
+		panic(err)
+	}
+
+	event := &util.Data{
+		Event: beat.Event{
+			Timestamp: time.Now(),
+			Texts: []string{
+				"Hello from the Kubernetes cluster",
+				"Goodbye from the Kubernetes cluster",
+			},
+		},
+	}
+	event.SetState(file.State{Source: "/data/bcs/docker/var/lib/docker/containers/f3616d188d0462018dc281373995c69765c2d91c39af60ee37501d65f28054ce/f3616d188d0462018dc281373995c69765c2d91c39af60ee37501d65f28054ce-json.log"})
+
+	data := f.Format([]*util.Data{event})
+
+	assert.Equal(t, data["items"].([]LineItem)[0].Data, event.Event.Texts[0])
+
+	assert.Equal(t, data["items"].([]LineItem)[1].Data, event.Event.Texts[1])
+}
+
+func TestV2FormatterMountReplace(t *testing.T) {
+	vars := map[string]interface{}{
+		"dataid":          "999990001",
+		"harvester_limit": 10,
+		"mounts": []config.Mount{
+			{"/var/lib/kubelet/pods/ab7e4dcd-4c93-4f01-8ebd-fb7bcc293bd9/volumes/kubernetes.io~csi/pvc-38265a73-baa1-4249-879b-af4bbc30a7ba/mount/sub", "/data/datahub/backup"},
+			{"/var/lib/kubelet/pods/ab7e4dcd-4c93-4f01-8ebd-fb7bcc293bd9/volumes/kubernetes.io~csi/pvc-38265a73-baa1-4249-879b-af4bbc30a7ba/mount", "/data/datahub/backup/deeper"},
+			{"/data/bcs/service/docker/overlay2/1780a6fb393c8462d50edd775f0f7c89bf0769c2ede03259e190a8ad2007043c/merged", ""},
+			{"/test/sub/mount", "/mount"},
+		},
+		"remove_path_prefix": "/var/host",
+		"is_container_std":   true,
+	}
+	taskConfig, err := config.CreateTaskConfig(vars)
+	if err != nil {
+		panic(err)
+	}
+	f, err := NewV2Formatter(taskConfig)
+	if err != nil {
+		panic(err)
+	}
+
+	event := &util.Data{
+		Event: beat.Event{
+			Timestamp: time.Now(),
+			Fields: common.MapStr{
+				"data":     "Hello from the Kubernetes cluster",
+				"stream":   "stdout",
+				"log_time": "2021-11-16T07:44:40.609753191Z",
+			},
+		},
+	}
+	event.SetState(file.State{Source: "/var/host/data/bcs/service/docker/overlay2/1780a6fb393c8462d50edd775f0f7c89bf0769c2ede03259e190a8ad2007043c/merged/data/datahub/udp/backup/a/b/c.log"})
+
+	data := f.Format([]*util.Data{event})
+
+	assert.Equal(t, data["filename"], "/data/datahub/udp/backup/a/b/c.log")
+
+	event.SetState(file.State{Source: "/var/host/var/lib/kubelet/pods/ab7e4dcd-4c93-4f01-8ebd-fb7bcc293bd9/volumes/kubernetes.io~csi/pvc-38265a73-baa1-4249-879b-af4bbc30a7ba/mount/d/e/f.log"})
+
+	data = f.Format([]*util.Data{event})
+
+	assert.Equal(t, data["filename"], "/data/datahub/backup/deeper/d/e/f.log")
+
 }

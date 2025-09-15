@@ -23,13 +23,15 @@
 package input
 
 import (
-	cfg "github.com/TencentBlueKing/bkunifylogbeat/config"
+	"time"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/elastic/beats/libbeat/common"
-	"time"
+
+	cfg "github.com/TencentBlueKing/bkunifylogbeat/config"
 )
 
-// WinEventLogConfig: window event log collect config
+// WinEventLogConfig window event log collect config
 type WinEventLogConfig struct {
 	EventLogs    []*common.Config `config:"event_logs"`
 	RegistryFile string           `config:"registry_file"`

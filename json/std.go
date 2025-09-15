@@ -20,33 +20,6 @@
 // WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 // SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-package filter
+//go:build !jsonsonic
 
-func equal(a, b string) bool {
-	return a == b
-}
-
-func notEqual(a, b string) bool {
-	return a != b
-}
-
-// sequence same with config define
-var operation = []func(a, b string) bool{
-	equal,
-	notEqual,
-}
-
-const (
-	EqualOperation = iota
-	NotEqualOperation
-)
-
-func getOperation(op string) func(a, b string) bool {
-	if op == "=" {
-		return equal
-	} else if op == "!=" {
-		return notEqual
-	} else {
-		return nil
-	}
-}
+package json

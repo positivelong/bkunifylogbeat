@@ -23,18 +23,21 @@
 package sender
 
 import (
-	"github.com/TencentBlueKing/bkunifylogbeat/task/formatter"
 	"testing"
 	"time"
 
-	"github.com/TencentBlueKing/bkunifylogbeat/config"
-	"github.com/TencentBlueKing/bkunifylogbeat/tests"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/logp"
 	"github.com/elastic/beats/filebeat/util"
 	"github.com/elastic/beats/libbeat/common"
 	libbeatlogp "github.com/elastic/beats/libbeat/logp"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkunifylogbeat/config"
+	"github.com/TencentBlueKing/bkunifylogbeat/task/formatter"
+	"github.com/TencentBlueKing/bkunifylogbeat/tests"
+
+	cfg "github.com/TencentBlueKing/bkunifylogbeat/config"
 )
 
 func init() {
@@ -58,7 +61,7 @@ type mockFormatter struct {
 	taskConfig *config.TaskConfig
 }
 
-//NewMockFormatter: mock formatter
+// NewMockFormatter: mock formatter
 func NewMockFormatter(config *config.TaskConfig) (*mockFormatter, error) {
 	f := &mockFormatter{
 		taskConfig: config,
@@ -94,7 +97,7 @@ func mockSender(canPackage bool, packageCount int) (*Sender, error) {
 	if err != nil {
 		return nil, err
 	}
-	taskConfig, err := config.NewTaskConfig(vars)
+	taskConfig, err := config.NewTaskConfig(cfg.Config{}, vars)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +119,7 @@ func mockSender(canPackage bool, packageCount int) (*Sender, error) {
 	return sender, nil
 }
 
-//TestSend: 测试打包发送
+// TestSend 测试打包发送
 func TestSend(t *testing.T) {
 	var sender *Sender
 	var err error

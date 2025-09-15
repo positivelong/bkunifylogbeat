@@ -26,18 +26,16 @@ package formatter
 
 import (
 	"fmt"
-	"path/filepath"
-	"strconv"
-	"strings"
 
-	"github.com/TencentBlueKing/bkunifylogbeat/config"
-	"github.com/TencentBlueKing/bkunifylogbeat/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/elastic/beats/filebeat/util"
 	"github.com/golang/groupcache/lru"
+
+	"github.com/TencentBlueKing/bkunifylogbeat/config"
+	"github.com/TencentBlueKing/bkunifylogbeat/utils"
 )
 
-//如果未配置close_inactive则直接默认为5分钟
+// LogConfig 如果未配置close_inactive则直接默认为5分钟
 type LogConfig struct {
 	HarvesterLimit int `config:"harvester_limit"`
 }
@@ -48,7 +46,7 @@ type unifytlogcFormatter struct {
 	cache *lru.Cache
 }
 
-//NewUnifytlogcFormatter: 兼容unifytlogc输出格式
+// NewUnifytlogcFormatter: 兼容unifytlogc输出格式
 func NewUnifytlogcFormatter(config *config.TaskConfig) (*unifytlogcFormatter, error) {
 	//获取任务配置中最大的FD数量
 	logConfig := &LogConfig{
@@ -66,7 +64,7 @@ func NewUnifytlogcFormatter(config *config.TaskConfig) (*unifytlogcFormatter, er
 	return f, nil
 }
 
-//Format: unifytlogc输出格式兼容
+// Format: unifytlogc输出格式兼容
 func (f unifytlogcFormatter) Format(events []*util.Data) beat.MapStr {
 	var (
 		datetime, utcTime string
@@ -89,20 +87,18 @@ func (f unifytlogcFormatter) Format(events []*util.Data) beat.MapStr {
 		"time":        timestamp,
 	}
 
-	hasEvent := false
-
 	var texts []string
 	for _, event := range events {
-		item := event.Event.Fields
-		if item == nil {
-			continue
+		for _, text := range event.Event.GetTexts() {
+			if text == "" {
+				continue
+			}
+			texts = append(texts, text)
 		}
-		hasEvent = true
-		texts = append(texts, item["data"].(string))
 	}
 
 	// 仅需要更新采集状态的事件数
-	if !hasEvent {
+	if len(texts) == 0 {
 		return nil
 	}
 	data["_value_"] = texts
@@ -110,42 +106,19 @@ func (f unifytlogcFormatter) Format(events []*util.Data) beat.MapStr {
 	data["_worldid_"] = f.getWorldID(lastState.Source)
 
 	//发送正常事件
-	if f.taskConfig.ExtMeta != nil {
-		data["_private_"] = f.taskConfig.ExtMeta
+	if len(f.taskConfig.GetExtMeta()) > 0 {
+		data["_private_"] = f.taskConfig.GetExtMeta()
 	} else {
 		data["_private_"] = ""
 	}
 	return data
 }
-
 func (f unifytlogcFormatter) getWorldID(path string) int64 {
-	cache, ok := f.cache.Get(path)
-	if ok {
-		return cache.(int64)
-	}
+	return getWorldIDFromPath(f, path)
+}
 
-	// 如果filename所在目录是“xxx_数字”的形式，worldid就是这个数字，否则为-1
-	worldID := int64(-1)
-	dir, _ := filepath.Split(path)
-	baseName := filepath.Base(dir)
-
-	separator := "_"
-	strPos := strings.Index(baseName, separator)
-
-	if strPos <= 0 || strings.Count(baseName, separator) != 1 {
-		f.cache.Add(path, worldID)
-		return worldID
-	}
-
-	candidate := baseName[strPos+1:]
-	worldID, err := strconv.ParseInt(candidate, 10, 64)
-	if err != nil {
-		worldID = int64(-1)
-		f.cache.Add(path, worldID)
-		return worldID
-	}
-	f.cache.Add(path, worldID)
-	return worldID
+func (f unifytlogcFormatter) GetCache() *lru.Cache {
+	return f.cache
 }
 
 func init() {

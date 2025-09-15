@@ -25,11 +25,12 @@
 package formatter
 
 import (
-	"github.com/TencentBlueKing/bkunifylogbeat/config"
-	"github.com/TencentBlueKing/bkunifylogbeat/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/elastic/beats/filebeat/util"
 	"strings"
+
+	"github.com/TencentBlueKing/bkunifylogbeat/config"
+	"github.com/TencentBlueKing/bkunifylogbeat/utils"
 )
 
 type v1Formatter struct {
@@ -44,8 +45,32 @@ func NewV1Formatter(config *config.TaskConfig) (*v1Formatter, error) {
 	return f, nil
 }
 
-// Format bklogbeat输出格式兼容
-func (f v1Formatter) Format(events []*util.Data) beat.MapStr {
+type commonFormatter interface {
+	GetTaskConfig() *config.TaskConfig
+}
+
+func (f v1Formatter) GetTaskConfig() *config.TaskConfig {
+	return f.taskConfig
+}
+
+func GetOriginFileName(fileName string, pathPrefix string, rootFs string, mountMap map[string]string, hostPaths []string) string {
+	// 优先使用根目录文件系统进行路径还原，否则使用主机前缀还原
+	if strings.HasPrefix(fileName, rootFs) {
+		fileName = strings.TrimPrefix(fileName, rootFs)
+	}
+
+	// 如果失败，使用挂载路径进行还原
+	for _, hostPath := range hostPaths {
+		containerPath := mountMap[hostPath]
+		if strings.HasPrefix(fileName, hostPath) {
+			fileName = strings.Replace(fileName, hostPath, containerPath, 1)
+			break
+		}
+	}
+
+	return fileName
+}
+func prepareData(f commonFormatter, events []*util.Data) beat.MapStr {
 	var (
 		datetime, utcTime string
 		timestamp         int64
@@ -54,38 +79,44 @@ func (f v1Formatter) Format(events []*util.Data) beat.MapStr {
 
 	lastState := events[len(events)-1].GetState()
 	filename := lastState.Source
-	if len(f.taskConfig.RemovePathPrefix) > 0 {
-		filename = strings.TrimPrefix(filename, f.taskConfig.RemovePathPrefix)
+	if len(f.GetTaskConfig().RemovePathPrefix) > 0 {
+		filename = GetOriginFileName(filename, f.GetTaskConfig().RemovePathPrefix, f.GetTaskConfig().RootFs,
+			f.GetTaskConfig().MountMap, f.GetTaskConfig().MountHostPaths)
 	}
 	data := beat.MapStr{
-		"dataid":   f.taskConfig.DataID,
+		"dataid":   f.GetTaskConfig().DataID,
 		"filename": filename,
 		"datetime": datetime,
 		"utctime":  utcTime,
 		"time":     timestamp,
 	}
 
-	hasEvent := false
+	return data
+}
+
+// Format bklogbeat输出格式兼容
+func (f v1Formatter) Format(events []*util.Data) beat.MapStr {
+	data := prepareData(f, events)
 
 	var texts []string
 	for _, event := range events {
-		item := event.Event.Fields
-		if item == nil {
-			continue
+		for _, text := range event.Event.GetTexts() {
+			if text == "" {
+				continue
+			}
+			texts = append(texts, text)
 		}
-		hasEvent = true
-		texts = append(texts, item["data"].(string))
 	}
 
 	// 仅需要更新采集状态的事件数
-	if !hasEvent {
+	if len(texts) == 0 {
 		return nil
 	}
 	data["data"] = texts
 
 	//发送正常事件
-	if f.taskConfig.ExtMeta != nil {
-		data["ext"] = f.taskConfig.ExtMeta
+	if len(f.taskConfig.GetExtMeta()) > 0 {
+		data["ext"] = f.taskConfig.GetExtMeta()
 	} else {
 		data["ext"] = ""
 	}

@@ -29,15 +29,16 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/logp"
 	bkmonitoring "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/monitoring"
-	"github.com/TencentBlueKing/bkunifylogbeat/config"
-	"github.com/TencentBlueKing/bkunifylogbeat/task/base"
-	"github.com/TencentBlueKing/bkunifylogbeat/task/filter"
-	"github.com/TencentBlueKing/bkunifylogbeat/utils"
 	"github.com/elastic/beats/filebeat/channel"
 	"github.com/elastic/beats/filebeat/input"
 	"github.com/elastic/beats/filebeat/input/file"
 	"github.com/elastic/beats/filebeat/util"
 	"github.com/elastic/beats/libbeat/common"
+
+	"github.com/TencentBlueKing/bkunifylogbeat/config"
+	"github.com/TencentBlueKing/bkunifylogbeat/task/base"
+	"github.com/TencentBlueKing/bkunifylogbeat/task/filter"
+	"github.com/TencentBlueKing/bkunifylogbeat/utils"
 )
 
 var (
@@ -50,6 +51,13 @@ var (
 	//inputDroppedTotal = bkmonitoring.NewInt("input_dropped_total")
 	inputHandledTotal = bkmonitoring.NewInt("input_handled_total")
 )
+
+// ContainerStdoutFields container 标准输出字段
+type ContainerStdoutFields struct {
+	Log    string `json:"log"`
+	Stream string `json:"stream"`
+	Time   string `json:"time"`
+}
 
 func GetInput(
 	taskCfg *config.TaskConfig,
@@ -88,7 +96,11 @@ func NewInput(
 	states []file.State,
 ) (*Input, error) {
 	var err error
-	var in = &Input{Node: base.NewEmptyNode(taskCfg.InputID)}
+	var in = &Input{
+		Node:              base.NewEmptyNode(taskCfg.InputID),
+		IsContainerStd:    taskCfg.IsContainerStd,
+		IsCRIContainerStd: taskCfg.IsCRIContainerStd,
+	}
 
 	f, err := filter.NewFilters(taskCfg, taskNode)
 	if err != nil {
@@ -124,6 +136,9 @@ func RemoveInput(id string) {
 
 type Input struct {
 	*base.Node
+
+	IsContainerStd    bool
+	IsCRIContainerStd bool
 
 	runner   *input.Runner
 	runOnce  sync.Once
@@ -165,7 +180,7 @@ func (in *Input) Run() {
 
 			data := e.(*util.Data)
 			if data.Event.Fields != nil {
-				for _, out := range in.Outs {
+				for _, out := range in.GetOuts() {
 					select {
 					case <-in.End:
 						return
@@ -173,7 +188,7 @@ func (in *Input) Run() {
 						inputHandledTotal.Add(1)
 						for _, taskNodeList := range in.TaskNodeList {
 							for _, tNode := range taskNodeList {
-								tNode.CrawlerReceived.Add(1)
+								tNode.CrawlerReceived.Add(int64(data.Event.Count()))
 							}
 						}
 					}
@@ -197,8 +212,8 @@ func (in *Input) Run() {
 
 // stop : 停止runner
 // 停用的场景:
-//   1. 当outs为空后，自动退出
-//   2. 当End的channel被主动关闭后
+//  1. 当outs为空后，自动退出
+//  2. 当End的channel被主动关闭后
 func (in *Input) stop() {
 	in.stopOnce.Do(func() {
 		go in.runner.Stop() // 防止卡主reload的流程，这里改为异步，不等待input结束
